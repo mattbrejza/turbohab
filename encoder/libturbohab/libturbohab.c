@@ -175,19 +175,15 @@ void encode(uint8_t *input, uint8_t *output_sys, uint8_t *output_par, uint16_t i
 	//systematic time
 
 	//fill in the termination we know
-	//!!!!!!!! change this so it isnt putting it at the end of memory
-	addr = interleaver_len;
+	temp = 0;
 	if (termination_u & (1<<3))
-		*(input+(addr>>3)) |= (1 << (7-(addr&0x7)));
-	addr++;
+		temp |= (1 << 0);
 	if (termination_u & (1<<6))
-		*(input+(addr>>3)) |= (1 << (7-(addr&0x7)));
-	addr++;
+		temp |= (1 << 1);
 	if (termination_l & (1<<3))
-		*(input+(addr>>3)) |= (1 << (7-(addr&0x7)));
-	addr++;
+		temp |= (1 << 2);
 	if (termination_l & (1<<6))
-		*(input+(addr>>3)) |= (1 << (7-(addr&0x7)));
+		temp |= (1 << 3);
 
 
 	//interleave the systematic into its final slot
@@ -195,7 +191,7 @@ void encode(uint8_t *input, uint8_t *output_sys, uint8_t *output_par, uint16_t i
 	mask = 0x80;
 	ptr = input;
 	current_byte = *ptr;
-	for (i = 0; i < interleaver_len+4; i++)
+	for (i = 0; i < interleaver_len; i++)
 	{
 		addr = subblock_interleaver_addr_inv(&sbi_state,i);
 
@@ -210,6 +206,13 @@ void encode(uint8_t *input, uint8_t *output_sys, uint8_t *output_par, uint16_t i
 			ptr++;
 			current_byte = *ptr;
 		}
+	}
+	for (i = 0; i < 4; i++)
+	{
+		addr = subblock_interleaver_addr_inv(&sbi_state,interleaver_len+i);
+		if (temp & 1)
+			*(output_sys+(addr>>3)) |= (1 << (7-(addr&0x7)));
+		temp >>= 1;
 	}
 
 
