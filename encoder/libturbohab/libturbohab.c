@@ -92,35 +92,35 @@ uint16_t channel_encode(uint8_t *input, uint8_t *output, uint16_t interleaver_le
         sync >>= 8;
     }
 
-    uint32_t size_f = ((int_coeff >> 15) & 0xFF0) | (rate & 0xF);
-    size_f = 0x15;
+    uint16_t size_f = ((int_coeff >> 17) & 0xFC) | (rate & 0x3);
+
     //apply hamming code (Starts at bit 12)
-    for (i = 0; i < 3*4; i+=4)
+    for (i = 0; i < 2*4; i+=4)
     {
-        if (((size_f & ((uint32_t)1<<(i+1)))>0) ^ ((size_f & ((uint32_t)1<<(i+2)))>0) ^ ((size_f & ((uint32_t)1<<(i+3)))>0))
-            size_f |= ((uint32_t)1<<(i+12));
-        if (((size_f & ((uint32_t)1<<(i+0)))>0) ^ ((size_f & ((uint32_t)1<<(i+2)))>0) ^ ((size_f & ((uint32_t)1<<(i+3)))>0))
-            size_f |= ((uint32_t)1<<(i+13));
-        if (((size_f & ((uint32_t)1<<(i+0)))>0) ^ ((size_f & ((uint32_t)1<<(i+1)))>0) ^ ((size_f & ((uint32_t)1<<(i+3)))>0))
-            size_f |= ((uint32_t)1<<(i+14));
-        if (((size_f & ((uint32_t)1<<(i+0)))>0) ^ ((size_f & ((uint32_t)1<<(i+1)))>0) ^ ((size_f & ((uint32_t)1<<(i+2)))>0))
-            size_f |= ((uint32_t)1<<(i+15));
+        if (((size_f & ((uint16_t)1<<(i+1)))>0) ^ ((size_f & ((uint16_t)1<<(i+2)))>0) ^ ((size_f & ((uint16_t)1<<(i+3)))>0))
+            size_f |= ((uint16_t)1<<(i+12));
+        if (((size_f & ((uint16_t)1<<(i+0)))>0) ^ ((size_f & ((uint16_t)1<<(i+2)))>0) ^ ((size_f & ((uint16_t)1<<(i+3)))>0))
+            size_f |= ((uint16_t)1<<(i+13));
+        if (((size_f & ((uint16_t)1<<(i+0)))>0) ^ ((size_f & ((uint16_t)1<<(i+1)))>0) ^ ((size_f & ((uint16_t)1<<(i+3)))>0))
+            size_f |= ((uint16_t)1<<(i+14));
+        if (((size_f & ((uint16_t)1<<(i+0)))>0) ^ ((size_f & ((uint16_t)1<<(i+1)))>0) ^ ((size_f & ((uint16_t)1<<(i+2)))>0))
+            size_f |= ((uint16_t)1<<(i+15));
     }
 
 
     //interleave hamming code
     uint8_t addr = 0;
     mask = 0x80;
-    for (i = 0; i < 24; i++)
+    for (i = 0; i < 16; i++)
     {
-        if (size_f & (uint32_t)1<<(addr))
+        if (size_f & (uint16_t)1<<(addr))
             output[BYTES_PREAMBLE+BYTES_SYNC_WORD+(i>>3)] |= mask;
         mask >>= 1;
         if (mask == 0)
             mask = 0x80;
         addr = addr + 8;
-        if (addr > 23){
-            addr = addr - 24;
+        if (addr > 15){
+            addr = addr - 16;
             addr += 3;
             if (addr >= 8)
                 addr -= 8;
@@ -133,9 +133,20 @@ uint16_t channel_encode(uint8_t *input, uint8_t *output, uint16_t interleaver_le
     if (remaining_bits > 0)
         full_bytes++;
 
-    encode_turbo(input,&output[BYTES_PREAMBLE+BYTES_SYNC_WORD+3],&output[BYTES_PREAMBLE+BYTES_SYNC_WORD+3+full_bytes],interleaver_len, int_coeff);
 
-    return BYTES_PREAMBLE*8+BYTES_SYNC_WORD*8+3*8+3*8*full_bytes;  //change
+    encode_turbo(input,&output[BYTES_PREAMBLE+BYTES_SYNC_WORD+2],&output[BYTES_PREAMBLE+BYTES_SYNC_WORD+2+full_bytes + BYTES_POST_SYNC_WORD],interleaver_len, int_coeff);
+
+    size_f = BYTES_PREAMBLE*8+BYTES_SYNC_WORD*8+2*8+ 8*full_bytes +BYTES_POST_SYNC_WORD*8;
+    if (rate == 0)       //R = 0.8   (send 0.25 x sys of parity)
+    	size_f += (interleaver_len+4) >> 2;
+    else if (rate == 1)  //R=0.65    (send 7/13 x sys of parity)
+    	size_f += ((interleaver_len+4)*7)/13;
+    else if (rate == 2)  //R=0.5     (send 1 x sys of parity)
+    	size_f += (interleaver_len+4);
+    else
+    	size_f += 2*(interleaver_len+4);
+
+    return size_f;//BYTES_PREAMBLE*8+BYTES_SYNC_WORD*8+2*8+3*8*full_bytes;  //change
 }
 
 
