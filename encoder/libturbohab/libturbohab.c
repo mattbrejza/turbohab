@@ -1,3 +1,25 @@
+//The MIT License (MIT)
+//
+//Copyright (c) 2014 Matthew Brejza
+//
+//Permission is hereby granted, free of charge, to any person obtaining a copy
+//of this software and associated documentation files (the "Software"), to deal
+//in the Software without restriction, including without limitation the rights
+//to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+//copies of the Software, and to permit persons to whom the Software is
+//furnished to do so, subject to the following conditions:
+//
+//The above copyright notice and this permission notice shall be included in all
+//copies or substantial portions of the Software.
+//
+//THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+//IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+//FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+//AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+//LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+//OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+//SOFTWARE.
+
 #include <inttypes.h>
 #include <stdint.h>
 #include "libturbohab.h"
@@ -8,10 +30,118 @@
 static uint8_t colPermPatInv[] = {0,16,8,24,4,20,12,28,2,18,10,26,6,22,14,30,
         1,17,9,25,5,21,13,29,3,19,11,27,7,23,15,31};
 
+static uint8_t urc_lte_termination(uint8_t *input, uint8_t *output, uint16_t total_bits );
+static uint8_t urc_lte_termination_io(uint8_t *io, uint16_t total_bits );
+static uint16_t interleaver_next(Qpp_state_t *st);
+static uint16_t interleaver_init(Qpp_state_t *st,uint16_t f1, uint16_t f2, uint16_t len);
+static uint16_t subblock_interleaver_addr_inv_nulls(Sbi_state_t *st, uint16_t i);
+static uint16_t subblock_interleaver12_isnull_reset(Sbi_state_t *st);
+static uint16_t subblock_interleaver_next(Sbi_state_t *st, uint8_t inc_nulls, uint8_t interleaver);
+static uint16_t subblock_interleaver_reset(Sbi_state_t *st, uint8_t inc_nulls, uint8_t interleaver);
+static uint8_t subblock_interleaver12_isnull_next(Sbi_state_t *st);
+static void subblock_interleaver_init(Sbi_state_t *st, uint8_t rows, uint8_t nd);
+static uint8_t mask2index(uint8_t input);
+
+
+
+uint16_t channel_encode(uint8_t *input, uint8_t *output, uint16_t interleaver_len, uint32_t int_coeff, uint8_t rate)
+{
+
+
+    uint16_t full_bytes = (interleaver_len-16) >> 3;
+    uint8_t remaining_bits = (interleaver_len-16) & 0x7;
+
+
+    //calculate crc
+    uint16_t crc = 0xFFFF;
+    uint8_t i;
+    for (i = 0; i < full_bytes; i++)
+        crc = crc_xmodem_update(crc,input[i]);
+
+    uint8_t mask = 0;
+    for (i = 0; i < remaining_bits; i++)
+        mask = (mask>>1) | 0x80;
+    if (mask > 0)
+        crc = crc_xmodem_update(crc,mask & input[full_bytes]);
+
+    //place crc at end of input
+    mask = 1<<(7-remaining_bits);
+    uint8_t *ptr = &input[full_bytes];
+    for (i = 0; i < 16; i++)
+    {
+        if (crc & 0x8000)
+            *ptr |= mask;
+        crc <<= 1;
+        mask >>= 1;
+
+        if (mask == 0)
+        {
+            mask = 0x80;
+            ptr++;
+        }
+    }
+
+    //add preamble to output
+    for (i = 0; i < BYTES_PREAMBLE; i++)
+        output[i] = 0x55;
+
+    //add sync word to output
+    uint32_t sync = SYNC_WORD;
+    for (i = BYTES_PREAMBLE+BYTES_SYNC_WORD-1; i >= BYTES_PREAMBLE; i--){
+        output[i] = sync & 0xFF;
+        sync >>= 8;
+    }
+
+    uint32_t size_f = ((int_coeff >> 15) & 0xFF0) | (rate & 0xF);
+    size_f = 0x15;
+    //apply hamming code (Starts at bit 12)
+    for (i = 0; i < 3*4; i+=4)
+    {
+        if (((size_f & ((uint32_t)1<<(i+1)))>0) ^ ((size_f & ((uint32_t)1<<(i+2)))>0) ^ ((size_f & ((uint32_t)1<<(i+3)))>0))
+            size_f |= ((uint32_t)1<<(i+12));
+        if (((size_f & ((uint32_t)1<<(i+0)))>0) ^ ((size_f & ((uint32_t)1<<(i+2)))>0) ^ ((size_f & ((uint32_t)1<<(i+3)))>0))
+            size_f |= ((uint32_t)1<<(i+13));
+        if (((size_f & ((uint32_t)1<<(i+0)))>0) ^ ((size_f & ((uint32_t)1<<(i+1)))>0) ^ ((size_f & ((uint32_t)1<<(i+3)))>0))
+            size_f |= ((uint32_t)1<<(i+14));
+        if (((size_f & ((uint32_t)1<<(i+0)))>0) ^ ((size_f & ((uint32_t)1<<(i+1)))>0) ^ ((size_f & ((uint32_t)1<<(i+2)))>0))
+            size_f |= ((uint32_t)1<<(i+15));
+    }
+
+
+    //interleave hamming code
+    uint8_t addr = 0;
+    mask = 0x80;
+    for (i = 0; i < 24; i++)
+    {
+        if (size_f & (uint32_t)1<<(addr))
+            output[BYTES_PREAMBLE+BYTES_SYNC_WORD+(i>>3)] |= mask;
+        mask >>= 1;
+        if (mask == 0)
+            mask = 0x80;
+        addr = addr + 8;
+        if (addr > 23){
+            addr = addr - 24;
+            addr += 3;
+            if (addr >= 8)
+                addr -= 8;
+
+        }
+    }
+
+    full_bytes = (interleaver_len+4) >> 3;
+    remaining_bits = (interleaver_len+4) & 0x7;
+    if (remaining_bits > 0)
+        full_bytes++;
+
+    encode_turbo(input,&output[BYTES_PREAMBLE+BYTES_SYNC_WORD+3],&output[BYTES_PREAMBLE+BYTES_SYNC_WORD+3+full_bytes],interleaver_len, int_coeff);
+
+    return BYTES_PREAMBLE*8+BYTES_SYNC_WORD*8+3*8+3*8*full_bytes;  //change
+}
+
 
 //output_sys needs to have interleaver_len + 4 bits
 //output_sys needs to have 2 * ceil(interleaver_len+4 / 32)*32 bits
-void encode_turbo(uint8_t *input, uint8_t *output_sys, uint8_t *output_par, uint16_t interleaver_len)
+void encode_turbo(uint8_t *input, uint8_t *output_sys, uint8_t *output_par, uint16_t interleaver_len, uint32_t int_coeff)
 {
     //does termination
 
@@ -25,9 +155,8 @@ void encode_turbo(uint8_t *input, uint8_t *output_sys, uint8_t *output_par, uint
     uint8_t temp;
 
     //interleaver bit/addr storage
-    uint16_t termuen_2_addr;
-    uint8_t termuun_1_addr;
-
+    uint16_t termuen_2_addr = 0;
+    uint8_t termuun_1_addr = 0;
 
     //calculate rows = ceil(D/32)
     if ((D & 0x1F) == 0)
@@ -40,10 +169,14 @@ void encode_turbo(uint8_t *input, uint8_t *output_sys, uint8_t *output_par, uint
     else
         bytes_per_stream = ( D >> 3 ) + 1;
 
+    //wipe outputs
+    memset((void*)output_sys,0,bytes_per_stream);
+    memset((void*)output_par,0,rows*4);
+
 
     //interleave the input into the output buffer (will be overwritten)
     Qpp_state_t state_qpp;
-    interleaver_init(&state_qpp,3, 10, interleaver_len);   //<<<<<<<<<<<<<<<<<<<<<<<< change
+    interleaver_init(&state_qpp,(uint32_t)(int_coeff >> 10)&0x1FF, int_coeff &0x3FF, interleaver_len);   //<<<<<<<<<<<<<<<<<<<<<<<< change
     addr = 0;
     mask = 0x80;
     ptr = output_sys;
@@ -210,38 +343,6 @@ void encode_turbo(uint8_t *input, uint8_t *output_sys, uint8_t *output_par, uint
         addr = subblock_interleaver_next(&sbi_state,0,1);
     }
 
-
-
-
-
-
-
-
-    /*
-    for (i = 0; i < interleaver_len; i++)
-    {
-        addr = subblock_interleaver_addr_inv(&sbi_state,i);
-
-        if (current_byte & mask)
-     *(output_sys+(addr>>3)) |= (1 << (7-(addr&0x7)));
-
-        mask = mask >> 1;
-
-        if (mask == 0)
-        {
-            mask = 0x80;
-            ptr++;
-            current_byte = *ptr;
-        }
-    }
-    for (i = 0; i < 4; i++)
-    {
-        addr = subblock_interleaver_addr_inv(&sbi_state,interleaver_len+i);
-        if (temp & 1)
-     *(output_sys+(addr>>3)) |= (1 << (7-(addr&0x7)));
-        temp >>= 1;
-    }
-     */
 
     /////////////////////////////////////
     //////////// null removal ///////////
@@ -558,4 +659,20 @@ static uint8_t mask2index(uint8_t input)
         input <<= 1;
     }
     return 0;
+}
+
+uint16_t crc_xmodem_update (uint16_t crc, uint8_t data)
+{
+    int i;
+
+    crc = crc ^ ((uint16_t)data << 8);
+    for (i=0; i<8; i++)
+    {
+        if (crc & 0x8000)
+            crc = (crc << 1) ^ 0x1021;
+        else
+            crc <<= 1;
+    }
+
+    return crc;
 }
