@@ -67,6 +67,8 @@ uint16_t channel_encode(uint8_t *input, uint8_t *output, uint16_t interleaver_le
     //place crc at end of input
     mask = 1<<(7-remaining_bits);
     uint8_t *ptr = &input[full_bytes];
+	input[full_bytes] = 0;
+	input[full_bytes+1] = 0;
     for (i = 0; i < 16; i++)
     {
         if (crc & 0x8000)
@@ -92,19 +94,23 @@ uint16_t channel_encode(uint8_t *input, uint8_t *output, uint16_t interleaver_le
         sync >>= 8;
     }
 
-    uint16_t size_f = ((int_coeff >> 17) & 0xFC) | (rate & 0x3);
+
+
+    uint16_t size_f = ((int_coeff >> 17)&0xFC) | (uint16_t)(rate & 0x3);
+    size_f |= (size_f<<4) & 0xF00;
+    size_f &= 0xF0F;
 
     //apply hamming code (Starts at bit 12)
-    for (i = 0; i < 2*4; i+=4)
+    for (i = 0; i < 2*4; i+=8)
     {
         if (((size_f & ((uint16_t)1<<(i+1)))>0) ^ ((size_f & ((uint16_t)1<<(i+2)))>0) ^ ((size_f & ((uint16_t)1<<(i+3)))>0))
-            size_f |= ((uint16_t)1<<(i+12));
+            size_f |= ((uint16_t)1<<(i+4));
         if (((size_f & ((uint16_t)1<<(i+0)))>0) ^ ((size_f & ((uint16_t)1<<(i+2)))>0) ^ ((size_f & ((uint16_t)1<<(i+3)))>0))
-            size_f |= ((uint16_t)1<<(i+13));
+            size_f |= ((uint16_t)1<<(i+5));
         if (((size_f & ((uint16_t)1<<(i+0)))>0) ^ ((size_f & ((uint16_t)1<<(i+1)))>0) ^ ((size_f & ((uint16_t)1<<(i+3)))>0))
-            size_f |= ((uint16_t)1<<(i+14));
+            size_f |= ((uint16_t)1<<(i+6));
         if (((size_f & ((uint16_t)1<<(i+0)))>0) ^ ((size_f & ((uint16_t)1<<(i+1)))>0) ^ ((size_f & ((uint16_t)1<<(i+2)))>0))
-            size_f |= ((uint16_t)1<<(i+15));
+            size_f |= ((uint16_t)1<<(i+7));
     }
 
 
@@ -121,7 +127,7 @@ uint16_t channel_encode(uint8_t *input, uint8_t *output, uint16_t interleaver_le
         addr = addr + 8;
         if (addr > 15){
             addr = addr - 16;
-            addr += 3;
+            addr += 1;
             if (addr >= 8)
                 addr -= 8;
 
@@ -550,7 +556,7 @@ static uint16_t subblock_interleaver_addr_inv_nulls(Sbi_state_t *st, uint16_t i)
     uint8_t col = colPermPatInv[i & 0x1F];
     uint8_t row = i >> 5;
 
-    return st->rows*col + row;
+    return st->rows*(uint16_t)col + (uint16_t)row;
 
 }
 
@@ -602,9 +608,9 @@ static uint16_t subblock_interleaver_next(Sbi_state_t *st, uint8_t inc_nulls, ui
             st->col++;
         }
 
-        out = colPermPatInv[st->col] + 32*st->row + interleaver;
-        if (out >= (uint16_t)(st->rows*32))
-            out = out - st->rows*32;
+        out = colPermPatInv[st->col] + 32*(uint16_t)st->row + interleaver;
+        if (out >= (uint16_t)((uint16_t)st->rows*32))
+            out = out - (uint16_t)st->rows*32;
 
 
     } while(!(inc_nulls) && (out < st->nd));

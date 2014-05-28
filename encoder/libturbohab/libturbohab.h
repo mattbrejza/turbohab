@@ -49,7 +49,8 @@ typedef struct Sbi_state_s{
 //bits [9:0] = f2
 //bits [18:10] = f1
 //bits [25:19] = index
-#define INT_C_40 ((uint32_t)(1<<19) | (3<<10) | (10))
+// ((uint32_t)(1<<19) | (3<<10) | (10))
+#define INT_C_40      527370
 #define INT_C_88      1578006
 #define INT_C_112     2139220
 #define INT_C_136     2630690
